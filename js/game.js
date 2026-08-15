@@ -17,7 +17,28 @@
   var SETS_PER_ROUND = 4;
   var CHIPS_PER_SET = 5;
   var REVEAL_GUARD_MS = 350; /* a double-click on "done sorting" must not skip the reveal */
-  var DRAG_THRESHOLD_PX = 6; /* pointer travel before a press becomes a drag */
+
+  /* Pointer travel before a press counts as a drag. 6px was under the
+     drift of an ordinary trackpad tap (tap-to-click especially), so
+     roughly every other tap crossed it, moved nothing, and then had its
+     click swallowed by the post-drag guard: the player tapped a chip,
+     nothing happened, and they had to tap again. Ease it per hardware
+     and floor it at 10 — a mouse pivots at the wrist and drifts most. */
+  var DRAG_THRESHOLD_BASE = 6;
+  function dragThresholdPx() {
+    return Math.max(10, ArtDaily.ease(DRAG_THRESHOLD_BASE));
+  }
+
+  /* Palm rejection. On a pen tablet the palm routinely lands a few
+     milliseconds before the nib; first-pointer-wins hands the whole
+     gesture to the palm. A pen always wins, and a touch is ignored for
+     half a second after any pen contact. */
+  var PEN_LOCKOUT_MS = 500;
+  var lastPenAt = 0;
+  function pointerAllowed(ev) {
+    if (ev.pointerType === 'pen') { lastPenAt = Date.now(); return true; }
+    return !(ev.pointerType === 'touch' && Date.now() - lastPenAt < PEN_LOCKOUT_MS);
+  }
 
   /* The warmth arc in "paint wheel" degrees: 20 (warmest orange-red)
      to 235 (coolest blue). Rendered through OKLCH (hue 40..262) so
@@ -42,6 +63,8 @@
      one adjacent swap = 80, two = 60, half-reversed and worse = 0.
      Ties are dropped from the denominator rather than counted against
      the player — nothing is out of order between two equal hues. */
+  var TAU_FLOOR = -0.2; /* where the 0 lands: worse than "half the pairs right" */
+
   function kendallScore(keysInOrder) {
     var n = keysInOrder.length, good = 0, bad = 0, i, j;
     for (i = 0; i < n; i++) {
@@ -52,7 +75,14 @@
     }
     var total = good + bad;
     if (total === 0) return n >= 2 ? 100 : 0; /* all tied: nothing misplaced */
-    return Math.max(0, (good - bad) / total) * 100;
+    var tau = (good - bad) / total;
+    /* Clamping tau at 0 meant "half the pairs in the right order" — a
+       genuine, partly-correct read of four murky near-neighbour swatches
+       — printed the same 0 as never touching the board. Slide the zero
+       point below the shuffle instead: a shuffle still lands in the low
+       teens (nothing is given away), while a half-right row now reads
+       ~17 and a two-pairs-flipped row reads 67. */
+    return 100 * Math.max(0, Math.min(1, (tau - TAU_FLOOR) / (1 - TAU_FLOOR)));
   }
 
   /* Round score = mean of the set scores. */
@@ -210,7 +240,11 @@
 
   function sortHint() {
     hint.textContent = 'set ' + (setIdx + 1) + ' of ' + SETS_PER_ROUND +
-      ' — drag the chips into order (or tap two to swap). warm on the left, cool on the right.';
+      ' — drag the chips into order, or tap one then tap another to swap them.' +
+      ' warm (fire, sun) on the left, cool (water, shade) on the right.' +
+      (setIdx === SETS_PER_ROUND - 1
+        ? ' this last set is the bonus one — the hues sit almost on top of each other, so anything you get here is extra.'
+        : '');
   }
 
   function revealHint(sc) {
@@ -279,7 +313,11 @@
      clear AA, plus a heavier tick for a correct one. The wrap keeps its
      space via visibility (not hidden), so "done sorting" never jumps. */
   function renderStrip(keys, ranks) {
-    if (phase === 'sort') { stripWrap.classList.remove('is-shown'); return; }
+    /* Set 1 shows the arc UNMARKED before the first scored judgement, so
+       "warm" and "cool" are anchored by something the player can see
+       rather than by two words they may not own yet. */
+    var preview = phase === 'sort';
+    if (preview && setIdx !== 0) { stripWrap.classList.remove('is-shown'); return; }
     var stops = [], i, t;
     for (i = 0; i <= STRIP_STOPS; i++) {
       t = i / STRIP_STOPS;
@@ -288,13 +326,19 @@
     }
     strip.style.background = 'linear-gradient(90deg,' + stops.join(',') + ')';
     strip.innerHTML = '';
-    for (i = 0; i < keys.length; i++) {
-      var mark = document.createElement('span');
-      mark.className = 'ts-mark' + (ranks[i] === i + 1 ? ' is-ok' : '');
-      mark.style.left = (keys[i] * 100) + '%';
-      mark.textContent = String(ranks[i]);
-      strip.appendChild(mark);
+    if (!preview) {
+      for (i = 0; i < keys.length; i++) {
+        var mark = document.createElement('span');
+        mark.className = 'ts-mark' + (ranks[i] === i + 1 ? ' is-ok' : '');
+        mark.style.left = (keys[i] * 100) + '%';
+        mark.textContent = String(ranks[i]);
+        strip.appendChild(mark);
+      }
     }
+    strip.setAttribute('aria-label', preview
+      ? 'the warm to cool arc these five swatches were taken from — warm at the left, cool at the right'
+      : 'Warm to cool strip marking each swatch’s true position');
+    stripWrap.classList.toggle('is-preview', preview);
     stripWrap.classList.add('is-shown');
   }
 
@@ -326,6 +370,7 @@
 
   function onDragStart(pos, el, ev) {
     if (phase !== 'sort' || dragPid !== null || ev.button > 0) return;
+    if (!pointerAllowed(ev)) return;
     didDrag = false; /* also recovers if a browser swallowed the post-drag click */
     dragPid = ev.pointerId;
     dragIdx = pos;
@@ -347,7 +392,7 @@
     if (!el) return;
     var dx = ev.clientX - dragX0, i, shift;
     if (!dragging) {
-      if (Math.abs(dx) < DRAG_THRESHOLD_PX) return;
+      if (Math.abs(dx) < dragThresholdPx()) return;
       dragging = true;
       didDrag = true;
       if (selected !== -1) { selected = -1; render(); }
@@ -373,6 +418,13 @@
     if (!cancelled && dragTarget !== dragIdx) {
       var moved = current.order.splice(dragIdx, 1)[0];
       current.order.splice(dragTarget, 0, moved);
+    } else {
+      /* The pointer wandered past the threshold but landed back in the
+         same slot: nothing moved, so this was a tap with a shaky hand,
+         not a drag. Let the click through as a select instead of eating
+         it — swallowing it is what made every other trackpad tap look
+         like a dead page. */
+      didDrag = false;
     }
     render();
   }

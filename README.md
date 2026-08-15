@@ -20,3 +20,27 @@ space is always reserved so buttons never shift).
 
 Run: `python3 -m http.server 8080` in this folder, open `localhost:8080`.
 Part of [Art Daily](https://artdaily.sadeali.com/) · [sadeali.com](https://sadeali.com/).
+
+## What changed in the input-fairness pass
+
+The drag threshold is eased per hardware and floored at 10px: at 6px an
+ordinary trackpad tap crossed it, moved nothing, and then had its click
+swallowed — so roughly every other tap silently did nothing. A gesture
+that ends in the slot it started in is now treated as a tap. The score's
+zero point sits below a shuffle rather than at it, so "half the pairs
+right" reads 17 instead of 0; the tap-to-swap path has a visible line of
+its own; and the warm→cool arc is shown unmarked before the first scored
+set so the two words are anchored by something you can see.
+
+## Input fairness
+
+Scores are only ever compared against your own history, so the drill
+eases its tolerances for the hardware in your hand and says which one it
+eased for (the "scoring for…" chip in the HUD). A pen keeps the strict
+reference; a mouse or trackpad, which pivots at the wrist and cannot
+creep, gets roughly double the room; a finger sits between. Start and
+grab zones move the other way — a screenless tablet needs the *biggest*
+targets, because the hand is out of sight. Relative tolerances carry an
+absolute pixel floor so a phone is never held to a stricter standard
+than a desktop for the same drill.
+

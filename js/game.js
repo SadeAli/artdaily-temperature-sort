@@ -2,9 +2,12 @@
    game.js — Temperature Sort. Five swatches at matched lightness
    and chroma, hues sampled inside the unambiguous warm→cool arc
    (orange-red through yellow/green to blue — never magenta or
-   purple, whose temperature depends on context). Tap two chips to
-   swap until the row runs warm→cool, then "done sorting". Score
-   is Kendall pair concordance; a round is the mean of 4 sets.
+   purple, whose temperature depends on context). Drag chips into
+   place — or tap two to swap, the keyboard/assistive path — until
+   the row runs warm→cool, then "done sorting". Score is Kendall's
+   tau rescaled to 0–100 (concordant minus discordant pairs, floored
+   at 0), so a shuffled row scores near nothing rather than the 50
+   that raw concordance would hand out; a round is the mean of 4 sets.
    DOM-based drill — the board replaces the template canvas.
    ============================================================ */
 (function () {
@@ -13,6 +16,8 @@
   var SLUG = 'temperature-sort';
   var SETS_PER_ROUND = 4;
   var CHIPS_PER_SET = 5;
+  var REVEAL_GUARD_MS = 350; /* a double-click on "done sorting" must not skip the reveal */
+  var DRAG_THRESHOLD_PX = 6; /* pointer travel before a press becomes a drag */
 
   /* The warmth arc in "paint wheel" degrees: 20 (warmest orange-red)
      to 235 (coolest blue). Rendered through OKLCH (hue 40..262) so
@@ -27,19 +32,27 @@
     return (hue - ARC_WARM) / (ARC_COOL - ARC_WARM);
   }
 
-  /* Kendall concordance: of all chip pairs in the player's order,
-     the fraction already running warm→cool. 5 chips = 10 pairs, so
-     each correct pair is worth 10; reversed row = 0, one adjacent
-     swap = 90, perfect = 100. */
+  /* Kendall's tau, rescaled to 0–100: over all chip pairs, concordant
+     minus discordant, divided by the pairs that can be judged. Perfect
+     = 100, reversed = 0, and — the reason for tau rather than raw
+     concordance — a shuffled row sits near 0 instead of 50. Raw
+     concordance would hand a player who never touched a chip an
+     average of exactly 50/100, which is a lie the skill meter would
+     then repeat. 5 chips = 10 pairs, so each inversion costs 20:
+     one adjacent swap = 80, two = 60, half-reversed and worse = 0.
+     Ties are dropped from the denominator rather than counted against
+     the player — nothing is out of order between two equal hues. */
   function kendallScore(keysInOrder) {
-    var n = keysInOrder.length, total = 0, good = 0, i, j;
+    var n = keysInOrder.length, good = 0, bad = 0, i, j;
     for (i = 0; i < n; i++) {
       for (j = i + 1; j < n; j++) {
-        total += 1;
         if (keysInOrder[i] < keysInOrder[j]) good += 1;
+        else if (keysInOrder[i] > keysInOrder[j]) bad += 1;
       }
     }
-    return total === 0 ? 0 : (good / total) * 100;
+    var total = good + bad;
+    if (total === 0) return n >= 2 ? 100 : 0; /* all tied: nothing misplaced */
+    return Math.max(0, (good - bad) / total) * 100;
   }
 
   /* Round score = mean of the set scores. */
@@ -115,6 +128,7 @@
      drops, so late sets are near-neighbour hues at murkier paint. */
   var GAP_BY_SET = [45, 34, 24, 16];
   var CHROMA_BY_SET = [0.12, 0.105, 0.09, 0.072];
+  var STRIP_STOPS = 10; /* gradient stops on the reveal strip */
 
   function rand(lo, hi) { return lo + Math.random() * (hi - lo); }
 
@@ -147,11 +161,19 @@
     for (i = 0; i < CHIPS_PER_SET; i++) {
       chips.push({ hue: hues[i], key: warmthKey(hues[i]), L: Lbase + rand(-0.02, 0.02) });
     }
-    /* one shared chroma per set (the most every hue can reach) so
-       saturation can never be the sorting cue */
+    /* One shared chroma per set (the most every hue can reach) so
+       saturation can never be the sorting cue. Fitted to the whole
+       warm→cool arc, not just the five hues in play: the reveal strip
+       paints the entire arc at this same chroma, and cyan (~OK hue
+       195) is the tight spot — fitting only the chips would leave the
+       strip's gradient silently clipped there, so the strip would no
+       longer be an honest iso-chroma ramp. */
     chroma = CHROMA_BY_SET[setIdx];
     for (i = 0; i < chips.length; i++) {
       chroma = Math.min(chroma, maxChroma(chips[i].L, arcToOkHue(chips[i].hue), chroma));
+    }
+    for (i = 0; i <= STRIP_STOPS; i++) {
+      chroma = Math.min(chroma, maxChroma(Lbase, OK_WARM + (i / STRIP_STOPS) * (OK_COOL - OK_WARM), chroma));
     }
     for (i = 0; i < chips.length; i++) {
       chips[i].css = oklchCss(chips[i].L, chroma, arcToOkHue(chips[i].hue));
@@ -184,16 +206,17 @@
   var selected = -1; /* selected position in the row, -1 = none */
   var phase = 'sort'; /* 'sort' | 'reveal' | 'done' */
   var chipEls = [];
+  var revealAt = 0; /* when the current reveal opened (double-click guard) */
 
   function sortHint() {
     hint.textContent = 'set ' + (setIdx + 1) + ' of ' + SETS_PER_ROUND +
-      ' — tap two chips to swap them. warm on the left, cool on the right.';
+      ' — drag the chips into order (or tap two to swap). warm on the left, cool on the right.';
   }
 
   function revealHint(sc) {
     var msg = sc === 100 ? 'every pair in order.' :
-              sc >= 90 ? 'one pair flipped.' :
-              sc >= 70 ? 'close — check the neighbours.' :
+              sc >= 80 ? 'one pair flipped.' :
+              sc >= 50 ? 'close — check the neighbours.' :
               'the strip shows where each hue really sits.';
     hint.textContent = 'set ' + (setIdx + 1) + ': ' + sc + ' / 100 — ' + msg;
   }
@@ -207,7 +230,11 @@
       b.type = 'button';
       b.className = 'ts-chip';
       (function (pos, el) {
-        el.addEventListener('click', function () { onChipTap(pos); });
+        el.addEventListener('click', function (ev) { onChipTap(pos, ev); });
+        el.addEventListener('pointerdown', function (ev) { onDragStart(pos, el, ev); });
+        el.addEventListener('pointermove', onDragMove);
+        el.addEventListener('pointerup', function (ev) { onDragEnd(ev, false); });
+        el.addEventListener('pointercancel', function (ev) { onDragEnd(ev, true); });
       })(i, b);
       chipsRow.appendChild(b);
       chipEls.push(b);
@@ -243,12 +270,19 @@
   }
 
   /* The reveal strip: the whole warm→cool arc at this set's paint
-     mix, with each chip's true position ticked and rank-numbered. */
+     mix (the set chroma is fitted to the entire arc, so this really is
+     an iso-chroma ramp), with each chip's true position ticked and
+     rank-numbered. Marks reuse the rank pills' split — accent = that
+     chip sat at its own rank, graphite = misplaced — so the eye can
+     connect chip to mark without number-matching; the split lives in
+     the NUMBER, which sits above the strip on --card where both themes
+     clear AA, plus a heavier tick for a correct one. The wrap keeps its
+     space via visibility (not hidden), so "done sorting" never jumps. */
   function renderStrip(keys, ranks) {
-    if (phase !== 'reveal') { stripWrap.hidden = true; return; }
+    if (phase === 'sort') { stripWrap.classList.remove('is-shown'); return; }
     var stops = [], i, t;
-    for (i = 0; i <= 10; i++) {
-      t = i / 10;
+    for (i = 0; i <= STRIP_STOPS; i++) {
+      t = i / STRIP_STOPS;
       stops.push(oklchCss(current.Lbase, current.chroma,
         OK_WARM + t * (OK_COOL - OK_WARM)) + ' ' + (t * 100) + '%');
     }
@@ -256,15 +290,99 @@
     strip.innerHTML = '';
     for (i = 0; i < keys.length; i++) {
       var mark = document.createElement('span');
-      mark.className = 'ts-mark';
+      mark.className = 'ts-mark' + (ranks[i] === i + 1 ? ' is-ok' : '');
       mark.style.left = (keys[i] * 100) + '%';
       mark.textContent = String(ranks[i]);
       strip.appendChild(mark);
     }
-    stripWrap.hidden = false;
+    stripWrap.classList.add('is-shown');
   }
 
-  function onChipTap(pos) {
+  /* ---- drag-to-reorder (pointer), tap-two-to-swap fallback ----
+     Insertion semantics: the dragged chip slides out and the row
+     closes around it, previewed live with transforms; the model
+     only changes on release. Taps still swap, so keyboard and
+     assistive users keep the original two-step interaction. */
+  var dragPid = null, dragIdx = -1, dragTarget = -1, dragging = false, didDrag = false;
+  var dragX0 = 0, slotW = 1;
+
+  function clampInt(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+  function slotWidth() {
+    if (chipEls.length > 1) {
+      var a = chipEls[0].getBoundingClientRect();
+      var b = chipEls[1].getBoundingClientRect();
+      if (b.left - a.left > 1) return b.left - a.left;
+    }
+    return chipEls[0] ? chipEls[0].getBoundingClientRect().width + 8 : 60;
+  }
+
+  function clearDragPaint() {
+    for (var i = 0; i < chipEls.length; i++) {
+      chipEls[i].style.transform = '';
+      chipEls[i].classList.remove('is-dragging');
+    }
+  }
+
+  function onDragStart(pos, el, ev) {
+    if (phase !== 'sort' || dragPid !== null || ev.button > 0) return;
+    didDrag = false; /* also recovers if a browser swallowed the post-drag click */
+    dragPid = ev.pointerId;
+    dragIdx = pos;
+    dragTarget = pos;
+    dragX0 = ev.clientX;
+    dragging = false;
+    slotW = slotWidth();
+    if (el.setPointerCapture) { try { el.setPointerCapture(ev.pointerId); } catch (e) {} }
+  }
+
+  /* The dragged element is always chipEls[dragIdx] — never the element
+     the listener happens to fire on. With pointer capture those are the
+     same, but if capture is unavailable the events land on whichever
+     chip is under the pointer, and painting *that* one would drag the
+     wrong swatch while the model moved the right one. */
+  function onDragMove(ev) {
+    if (ev.pointerId !== dragPid) return;
+    var el = chipEls[dragIdx];
+    if (!el) return;
+    var dx = ev.clientX - dragX0, i, shift;
+    if (!dragging) {
+      if (Math.abs(dx) < DRAG_THRESHOLD_PX) return;
+      dragging = true;
+      didDrag = true;
+      if (selected !== -1) { selected = -1; render(); }
+      el.classList.add('is-dragging');
+    }
+    el.style.transform = 'translate(' + dx + 'px, -4px)';
+    dragTarget = clampInt(dragIdx + Math.round(dx / slotW), 0, CHIPS_PER_SET - 1);
+    for (i = 0; i < chipEls.length; i++) {
+      if (i === dragIdx) continue;
+      shift = 0;
+      if (dragIdx < dragTarget && i > dragIdx && i <= dragTarget) shift = -slotW;
+      else if (dragIdx > dragTarget && i >= dragTarget && i < dragIdx) shift = slotW;
+      chipEls[i].style.transform = shift ? 'translateX(' + shift + 'px)' : '';
+    }
+  }
+
+  function onDragEnd(ev, cancelled) {
+    if (ev.pointerId !== dragPid) return;
+    dragPid = null;
+    if (!dragging) return; /* plain tap — the click handler swaps */
+    dragging = false;
+    clearDragPaint();
+    if (!cancelled && dragTarget !== dragIdx) {
+      var moved = current.order.splice(dragIdx, 1)[0];
+      current.order.splice(dragTarget, 0, moved);
+    }
+    render();
+  }
+
+  function onChipTap(pos, ev) {
+    /* A keyboard activation (Enter/Space) reports detail 0 and can never
+       be the tail of a drag, so it must never be eaten by the drag
+       guard — otherwise a browser that swallowed a post-drag click
+       leaves didDrag set and silently drops the next keyboard swap. */
+    if (didDrag && !(ev && ev.detail === 0)) { didDrag = false; return; }
     if (phase !== 'sort') return;
     if (selected === -1) {
       selected = pos;
@@ -282,15 +400,24 @@
   function startSet() {
     current = makeSet(setIdx);
     selected = -1;
+    dragPid = null;
+    dragging = false;
+    didDrag = false;
     phase = 'sort';
     btnDone.textContent = 'done sorting';
     btnDone.disabled = false;
-    buildChips();
+    clearDragPaint(); /* no stale transform can survive into a new set */
     sortHint();
     render();
   }
 
   function newRound() {
+    /* If set 4's reveal is on screen, the round is fully scored —
+       report it before resetting, so "new round" mid-reveal never
+       swallows a finished round. finishRound() flips phase to
+       'done', so this cannot double-report (same guard pattern as
+       neutral-hunt). */
+    if (phase === 'reveal' && setScores.length >= SETS_PER_ROUND) finishRound();
     round += 1;
     setIdx = 0;
     setScores = [];
@@ -307,12 +434,16 @@
       sc = Math.round(kendallScore(keys));
       setScores.push(sc);
       phase = 'reveal';
+      revealAt = Date.now();
       btnDone.textContent = setIdx < SETS_PER_ROUND - 1 ? 'next set →' : 'finish round';
       revealHint(sc);
       render();
       return;
     }
     if (phase === 'reveal') {
+      /* an accidental double-click on the same button must not
+         skip the reveal — the drill's whole teaching payload */
+      if (Date.now() - revealAt < REVEAL_GUARD_MS) return;
       if (setIdx < SETS_PER_ROUND - 1) {
         setIdx += 1;
         startSet();
@@ -325,7 +456,7 @@
   function finishRound() {
     phase = 'done';
     btnDone.disabled = true;
-    stripWrap.hidden = true;
+    /* the strip stays up: set 4's reveal is still teaching material */
     var res = ArtDaily.report(roundScore(setScores));
     hudScore.textContent = String(res.score);
     hudBest.textContent = res.best === null ? '–' : String(res.best);
@@ -356,12 +487,19 @@
     btnHow.setAttribute('aria-expanded', String(!howTo.hidden));
   });
 
-  /* Swatch colours are data (absolute), all chrome uses CSS vars —
-     a re-render on theme flip keeps annotation contrast honest. */
+  /* Swatch colours and the reveal strip are data — absolute, identical
+     in both themes — and every annotation around them is a CSS
+     variable, so the cascade handles a theme flip on its own. render()
+     is registered anyway to keep the family's repaint contract; it is
+     safe to call in any phase (it no-ops before the first set). */
   ArtDaily.onTheme(render);
 
   /* ---- boot ---- */
   var best = ArtDaily.best();
   hudBest.textContent = best === null ? '–' : String(best);
+  /* The five buttons are built ONCE and repainted in place, so keyboard
+     focus survives every swap, reveal and set change (same persistent-
+     button pattern as neutral-hunt). */
+  buildChips();
   newRound();
 })();

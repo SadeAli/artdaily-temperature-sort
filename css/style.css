@@ -416,18 +416,29 @@ a { color: inherit; }
 .ts-chip {
   position: relative;
   flex: 1;
-  min-width: 40px;
+  min-width: 44px; /* never below the 44px touch-target floor */
   height: 72px;
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--ink) 30%, transparent);
   border-radius: 4px 10px 5px 9px;
-  cursor: pointer;
+  cursor: grab; /* chips drag — grab affords it */
   box-shadow: 0 2px 0 var(--shadow);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
-  touch-action: manipulation;
+  touch-action: pan-y; /* horizontal drags sort; vertical swipes still scroll */
+  user-select: none;
+  -webkit-user-select: none;
 }
 .ts-chip:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 4px 0 var(--shadow); }
 .ts-chip:disabled { cursor: default; }
+
+/* mid-drag: the chip rides the pointer — no transition lag, above
+   its neighbours, deeper shadow */
+.ts-chip.is-dragging {
+  transition: none;
+  z-index: 5;
+  cursor: grabbing;
+  box-shadow: 0 6px 0 var(--shadow);
+}
 
 /* first tap: the accent ring (box-shadow so it never fights the
    focus-visible outline) */
@@ -467,8 +478,11 @@ a { color: inherit; }
 :root[data-theme="dark"] .ts-rank.is-ok { color: color-mix(in srgb, var(--game-accent) 65%, var(--ink)); }
 
 /* reveal strip: the full warm→cool arc; numbered ticks mark each
-   swatch's true hue position (top padding leaves room for numbers) */
-.ts-strip-wrap { padding-top: 26px; margin-top: 6px; }
+   swatch's true hue position (top padding leaves room for numbers).
+   The wrap keeps its space while sorting (visibility, not display)
+   so the "done sorting" button never jumps at the reveal. */
+.ts-strip-wrap { padding-top: 26px; margin-top: 6px; visibility: hidden; }
+.ts-strip-wrap.is-shown { visibility: visible; }
 
 .ts-strip {
   position: relative;
@@ -477,6 +491,9 @@ a { color: inherit; }
   border: 1px solid color-mix(in srgb, var(--ink) 25%, transparent);
 }
 
+/* Same correct/misplaced split as the rank pills, but carried by the
+   NUMBER only: the numbers sit above the strip on --card, where both
+   themes clear AA (13.6:1 graphite, 6.7:1 / 10.1:1 accent). */
 .ts-mark {
   position: absolute;
   top: -24px;
@@ -484,9 +501,20 @@ a { color: inherit; }
   font-family: var(--mono);
   font-size: 0.72rem;
   font-weight: 900;
-  color: color-mix(in srgb, var(--game-accent) 45%, var(--ink));
+  color: var(--ink);
 }
-:root[data-theme="dark"] .ts-mark { color: color-mix(in srgb, var(--game-accent) 80%, var(--ink)); }
+.ts-mark.is-ok { color: color-mix(in srgb, var(--game-accent) 45%, var(--ink)); }
+:root[data-theme="dark"] .ts-mark.is-ok { color: color-mix(in srgb, var(--game-accent) 80%, var(--ink)); }
+
+/* The tick lies ON the gradient, and the gradient is data — it is the
+   same light, saturated ramp in both themes. So the tick takes a fixed
+   graphite rather than var(--ink): dark-theme ink is near-white and
+   managed only 2.2:1 against the strip's cyan. Fixed graphite holds
+   >= 4.3:1 across the whole arc in both themes.
+   Correctness is NOT encoded in the tick's colour — an accent tint dark
+   enough to stay legible here is indistinguishable from the graphite
+   (1.4:1 apart) — so a correct tick is marked by WEIGHT instead, and by
+   its number above. */
 .ts-mark::after {
   content: "";
   position: absolute;
@@ -495,13 +523,15 @@ a { color: inherit; }
   width: 2px;
   height: 22px;
   transform: translateX(-50%);
-  background: currentColor;
+  background: #33291E;
   border-radius: 1px;
 }
+.ts-mark.is-ok::after { width: 4px; border-radius: 2px; }
 
 .ts-actions { display: flex; justify-content: center; margin-top: 16px; }
 
 @media (max-width: 480px) {
+  .ts-board { padding-left: 10px; padding-right: 10px; } /* wider chips on narrow phones */
   .ts-chips { gap: 6px; }
   .ts-chip { height: 60px; }
 }

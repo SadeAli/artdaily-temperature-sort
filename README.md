@@ -34,13 +34,29 @@ set so the two words are anchored by something you can see.
 
 ## Input fairness
 
-Scores are only ever compared against your own history, so the drill
-eases its tolerances for the hardware in your hand and says which one it
-eased for (the "scoring for…" chip in the HUD). A pen keeps the strict
-reference; a mouse or trackpad, which pivots at the wrist and cannot
-creep, gets roughly double the room; a finger sits between. Start and
-grab zones move the other way — a screenless tablet needs the *biggest*
-targets, because the hand is out of sight. Relative tolerances carry an
-absolute pixel floor so a phone is never held to a stricter standard
-than a desktop for the same drill.
+Nothing in this drill is a stroke, so nothing in it is eased per device.
+Reading a colour is the same judgement from a pen, a trackpad or a thumb,
+and widening the tolerance for a phone would just hand it free points for
+the one thing the drill is actually testing. The HUD's "scoring for…"
+chip is the shared SDK reporting which pointer it detected; here it
+changes no number.
+
+What hardware *can* decide is whether you are able to enter the answer
+you meant, and that is what is guaranteed instead:
+
+* the drag threshold is the one number this drill eases:
+  `Math.max(10, ArtDaily.ease(6))` — 12px on a mouse or trackpad, 10px on
+  a pen or a finger. The old flat 6px sat under the drift of an ordinary
+  trackpad tap, so roughly every other tap crossed it, moved nothing, and
+  had its click swallowed;
+* a chip that wanders past the threshold and lands back in its own slot
+  is treated as a shaky tap, not a drag, and the click is let through;
+* tap-one-then-another swaps two chips, so a trackpad, a keyboard or an
+  assistive device never has to drag at all;
+* chips are `flex: 1` with a hard `min-width: 44px`, 72px tall (60px
+  below 480px), and `touch-action: pan-y` keeps vertical page scrolling
+  working while horizontal drags sort.
+
+The score itself — Kendall's tau on the order you leave behind — is
+identical on every device.
 

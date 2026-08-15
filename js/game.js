@@ -224,6 +224,7 @@
   var stripWrap = document.getElementById('tsStripWrap');
   var strip = document.getElementById('tsStrip');
   var btnDone = document.getElementById('btnDone');
+  var btnRound = document.getElementById('btnRound');
   var hint = document.getElementById('hint');
   var toast = document.getElementById('toast');
   var hudRound = document.getElementById('hudRound');
@@ -507,7 +508,13 @@
 
   function finishRound() {
     phase = 'done';
+    /* "done sorting" is the button the player is standing on when they
+       finish, and disabling a focused button drops focus to <body> — the
+       keyboard player then has to Tab in from the top of the page to
+       reach "new round". Hand focus to the one live control instead. */
+    var keepFocus = document.activeElement === btnDone;
     btnDone.disabled = true;
+    if (keepFocus) btnRound.focus();
     /* the strip stays up: set 4's reveal is still teaching material */
     var res = ArtDaily.report(roundScore(setScores));
     hudScore.textContent = String(res.score);
@@ -518,19 +525,24 @@
 
   var toastTimer = null;
   function showToast(msg, celebrate) {
+    /* Unhide BEFORE filling. A live region that is mutated while it is
+       still `hidden` is mutated inside a subtree the accessibility tree
+       does not carry, and un-hiding it afterwards is not itself a content
+       change — so the round score announced to nobody. Show it first,
+       then write into it, and the announcement actually happens. */
+    toast.hidden = false;
     toast.innerHTML = '';
     var s = document.createElement('span');
     s.className = celebrate ? 'toast-accent' : '';
     s.textContent = msg;
     toast.appendChild(s);
-    toast.hidden = false;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { toast.hidden = true; }, 2200);
   }
 
   /* ---- chrome wiring ---- */
   btnDone.addEventListener('click', onDone);
-  document.getElementById('btnRound').addEventListener('click', newRound);
+  btnRound.addEventListener('click', newRound);
 
   var btnHow = document.getElementById('btnHow');
   var howTo = document.getElementById('howTo');

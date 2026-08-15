@@ -425,6 +425,15 @@ a { color: inherit; }
 
 /* ===== temperature-sort board (replaces the canvas) ===== */
 
+/* The selection ring is the ONLY signal that the tap-two-to-swap path —
+   the keyboard and trackpad path — has hold of a chip, and bare
+   bubblegum measures 2.95:1 against the paper sheet: under the 3:1 floor
+   a non-text mark that carries meaning has to clear. Ink it on paper
+   (4.5:1) and leave it bright in the night studio, where it already
+   reads at 6.9:1. Same split the rank pills below use. */
+.ts-board { --ring-accent: color-mix(in srgb, var(--game-accent) 70%, var(--ink)); }
+:root[data-theme="dark"] .ts-board { --ring-accent: var(--game-accent); }
+
 .ts-board {
   border: 1px solid var(--line);
   border-radius: 5px 12px 6px 11px;
@@ -482,7 +491,7 @@ a { color: inherit; }
   transform: translateY(-4px) rotate(-1.5deg);
   box-shadow:
     0 0 0 3px var(--card),
-    0 0 0 6px var(--game-accent),
+    0 0 0 6px var(--ring-accent, var(--game-accent)),
     0 5px 0 var(--shadow);
 }
 

@@ -302,7 +302,22 @@
       el.disabled = phase !== 'sort';
       el.innerHTML = '';
       if (phase === 'sort') {
-        el.setAttribute('aria-label', 'swatch ' + (i + 1) + ' of ' + CHIPS_PER_SET);
+        /* Sorting by tapping is a TWO-STEP control, and "swatch 3 of 5"
+           said nothing about either step: not that activating this chip
+           picks it up, and not — once one IS held — what activating this
+           one will now do. The only place that was explained is the
+           on-screen tip, which says "drag" and "tap": both wrong verbs
+           for the half of the room working a keyboard, who cannot drag
+           at all and for whom this two-step swap is the ONLY way to
+           play. Say what activating THIS chip does, in the state it is
+           actually in. (aria-pressed already carries the raw on/off;
+           what it cannot say is what the second press is for.) */
+        el.setAttribute('aria-label', 'swatch ' + (i + 1) + ' of ' + CHIPS_PER_SET +
+          (selected === -1
+            ? ' — activate to pick it up'
+            : (selected === i
+              ? ' — picked up; activate again to put it back'
+              : ' — activate to swap with swatch ' + (selected + 1))));
       } else {
         el.setAttribute('aria-label', 'swatch ' + (i + 1) + ', warmth rank ' + ranks[i] +
           (ranks[i] === i + 1 ? ', correct' : ''));

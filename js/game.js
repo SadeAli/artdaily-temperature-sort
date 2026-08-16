@@ -276,6 +276,22 @@
     hint.textContent = 'set ' + (setIdx + 1) + ': ' + sc + ' / 100 — ' + msg;
   }
 
+  /* Every arrow in this family's markup is wrapped in an aria-hidden
+     span, because it is decoration — but this button relabels itself
+     from JS with textContent, which dropped the glyph straight into the
+     accessible name: "next set right arrow". Rebuild the label the way
+     the markup does it. */
+  function setBtnLabel(btn, text, glyph) {
+    btn.innerHTML = '';
+    btn.appendChild(document.createTextNode(glyph ? text + ' ' : text));
+    if (glyph) {
+      var g = document.createElement('span');
+      g.setAttribute('aria-hidden', 'true');
+      g.textContent = glyph;
+      btn.appendChild(g);
+    }
+  }
+
   function buildChips() {
     var i;
     chipsRow.innerHTML = '';
@@ -528,7 +544,7 @@
     dragging = false;
     didDrag = false;
     phase = 'sort';
-    btnDone.textContent = 'done sorting';
+    setBtnLabel(btnDone, 'done sorting');
     btnDone.disabled = false;
     clearDragPaint(); /* no stale transform can survive into a new set */
     sortHint();
@@ -559,7 +575,8 @@
       setScores.push(sc);
       phase = 'reveal';
       revealAt = Date.now();
-      btnDone.textContent = setIdx < SETS_PER_ROUND - 1 ? 'next set →' : 'finish round';
+      if (setIdx < SETS_PER_ROUND - 1) setBtnLabel(btnDone, 'next set', '→');
+      else setBtnLabel(btnDone, 'finish round');
       revealHint(sc);
       render();
       return;

@@ -66,22 +66,33 @@
   var TAU_FLOOR = -0.2; /* where the 0 lands: worse than "half the pairs right" */
 
   function kendallScore(keysInOrder) {
-    var n = keysInOrder.length, good = 0, bad = 0, i, j;
+    var n = keysInOrder.length, good = 0, bad = 0, usable = 0, i, j;
     for (i = 0; i < n; i++) {
+      if (isFinite(keysInOrder[i])) usable += 1;
       for (j = i + 1; j < n; j++) {
         if (keysInOrder[i] < keysInOrder[j]) good += 1;
         else if (keysInOrder[i] > keysInOrder[j]) bad += 1;
       }
     }
     var total = good + bad;
-    if (total === 0) return n >= 2 ? 100 : 0; /* all tied: nothing misplaced */
+    /* All tied is a real 100 — nothing is out of order between equal hues.
+       A row of NaNs reaches the same place by a different road: every
+       comparison against NaN is false, so good and bad both stay 0 and the
+       tie branch handed out a full 100 for keys that could not be judged at
+       all. That is the fake-perfect the protocol forbids for degenerate
+       input, and it would have been written to the permanent best. Two
+       genuinely comparable keys are the price of the tie. */
+    if (total === 0) return usable >= 2 ? 100 : 0;
     var tau = (good - bad) / total;
     /* Clamping tau at 0 meant "half the pairs in the right order" — a
        genuine, partly-correct read of four murky near-neighbour swatches
        — printed the same 0 as never touching the board. Slide the zero
-       point below the shuffle instead: a shuffle still lands in the low
-       teens (nothing is given away), while a half-right row now reads
-       ~17 and a two-pairs-flipped row reads 67. */
+       point below the shuffle instead: a half-right row now reads ~17
+       and a two-pairs-flipped row reads 67. The dealt row a player never
+       touches averages 23 (measured over 60 000 deals, pre-sorted rows
+       rejected as makeSet does) — the cost of paying for a partial read
+       is that a shuffle is worth about a fifth of the scale, not the
+       "low teens" this note used to claim. */
     return 100 * Math.max(0, Math.min(1, (tau - TAU_FLOOR) / (1 - TAU_FLOOR)));
   }
 

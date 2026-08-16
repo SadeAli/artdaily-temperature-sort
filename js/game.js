@@ -32,8 +32,17 @@
   /* Palm rejection. On a pen tablet the palm routinely lands a few
      milliseconds before the nib; first-pointer-wins hands the whole
      gesture to the palm. A pen always wins, and a touch is ignored for
-     half a second after any pen contact. */
-  var PEN_LOCKOUT_MS = 500;
+     a beat after any pen contact.
+     700ms, not 500 — that is the number the shared SDK settled on for
+     exactly this guard, and its own comment says "the drills' own palm
+     guard uses this". It did not. */
+  var PEN_LOCKOUT_MS = 700;
+  /* A press this old lost its release: a swallowed pointercancel, a
+     system gesture, a tab hidden mid-drag. Without this the drill's ONE
+     drag slot stays occupied by a pointer that will never lift, and
+     dragging is dead for the rest of the round. Same self-heal, same
+     window, as the SDK's own pointer sniffer. */
+  var GESTURE_IDLE_MS = 2000;
   var lastPenAt = 0;
   function pointerAllowed(ev) {
     if (ev.pointerType === 'pen') { lastPenAt = Date.now(); return true; }
@@ -376,6 +385,7 @@
      assistive users keep the original two-step interaction. */
   var dragPid = null, dragIdx = -1, dragTarget = -1, dragging = false, didDrag = false;
   var dragX0 = 0, slotW = 1;
+  var dragEl = null, dragStartedAt = 0;
 
   function clampInt(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
@@ -395,11 +405,44 @@
     }
   }
 
+  /* Drop an in-flight gesture without touching the model: the preview
+     transforms come off, nothing is reordered. Used when a pen takes the
+     board off a palm, and when a press that lost its release is evicted. */
+  function abandonDrag() {
+    if (dragEl && dragEl.releasePointerCapture && dragPid !== null) {
+      try { dragEl.releasePointerCapture(dragPid); } catch (e) {}
+    }
+    dragPid = null;
+    dragEl = null;
+    dragging = false;
+    didDrag = false;
+    clearDragPaint();
+  }
+
   function onDragStart(pos, el, ev) {
-    if (phase !== 'sort' || dragPid !== null || ev.button > 0) return;
+    if (phase !== 'sort' || ev.button > 0) return;
+    /* THE HARDWARE QUESTION IS ANSWERED FIRST, before "someone already
+       holds the gesture". On a pen display the palm lands a few
+       milliseconds BEFORE the nib, so the old order — bail out early
+       because dragPid was already taken — meant the nib's own
+       pointerdown never even registered as pen contact: lastPenAt stayed
+       stale, the palm kept the gesture, and the artist dragged with the
+       heel of their hand. A pen now preempts whatever is holding the
+       board. (A screenless tablet never lands a palm at all, so this
+       costs it nothing.) */
+    var isPen = ev.pointerType === 'pen';
     if (!pointerAllowed(ev)) return;
+    if (dragPid !== null) {
+      /* Anything that is not a pen waits its turn — unless the pointer
+         holding the slot is long gone, in which case its release was
+         swallowed and the slot has to be reclaimed or dragging is dead. */
+      if (!isPen && Date.now() - dragStartedAt < GESTURE_IDLE_MS) return;
+      abandonDrag();
+    }
     didDrag = false; /* also recovers if a browser swallowed the post-drag click */
     dragPid = ev.pointerId;
+    dragEl = el;
+    dragStartedAt = Date.now();
     dragIdx = pos;
     dragTarget = pos;
     dragX0 = ev.clientX;
@@ -439,6 +482,7 @@
   function onDragEnd(ev, cancelled) {
     if (ev.pointerId !== dragPid) return;
     dragPid = null;
+    dragEl = null;
     if (!dragging) return; /* plain tap — the click handler swaps */
     dragging = false;
     clearDragPaint();
@@ -480,6 +524,7 @@
     current = makeSet(setIdx);
     selected = -1;
     dragPid = null;
+    dragEl = null;
     dragging = false;
     didDrag = false;
     phase = 'sort';
